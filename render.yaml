@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: rspfi-telegram-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: BOT_TOKEN
+        value: 8878287624:AAGMUN0Y-5bfA1Erq5Pmsn4ZrfXQSOP8ZSM
+      - key: ADMIN_ID
+        value: "5775087092"
+      - key: ADMIN_USERNAME
+        value: Smael6667
+      - key: SUPPORT_TELEGRAM
+        value: https://t.me/ceo_yanFi
+      - key: DELIVERY_FEE
+        value: "1.50"
