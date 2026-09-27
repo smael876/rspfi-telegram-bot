@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 
 CURRENCY = os.getenv("CURRENCY", "$")
 SHOP_NAME = os.getenv("SHOP_NAME", "RSPFI Store")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip().lstrip("@").lower()
+ADMIN_ID = int(os.getenv("ADMIN_ID", "5775087092"))
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Smael6667").strip().lstrip("@").lower()
 SUPPORT_TELEGRAM = os.getenv("SUPPORT_TELEGRAM", "https://t.me/ceo_yanFi")
 DELIVERY_FEE = float(os.getenv("DELIVERY_FEE", "1.50"))
 

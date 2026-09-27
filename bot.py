@@ -14,14 +14,32 @@ if sys.platform == "win32":
 # Load environment variables from .env
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-    print("=" * 60)
-    print("⚠️  សូមបញ្ចូល Telegram Bot Token របស់អ្នកនៅក្នុង file .env ជាមុនសិន!")
-    print("1. ចូលទៅកាន់ Telegram រួចស្វែងរក @BotFather")
-    print("2. វាយ /newbot ដើម្បីបង្កើត Bot ថ្មី")
-    print("3. ចម្លង Token មកដាក់ក្នុង .env ត្រង់ BOT_TOKEN=...")
-    print("=" * 60)
+BOT_TOKEN = os.getenv("BOT_TOKEN") or "8878287624:AAGMUN0Y-5bfA1Erq5Pmsn4ZrfXQSOP8ZSM"
+
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"RSPFI Telegram Bot is Running 24/7!")
+
+    def log_message(self, format, *args):
+        pass
+
+def start_health_check_server():
+    port_str = os.getenv("PORT")
+    if not port_str:
+        return
+    try:
+        port = int(port_str)
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        logger.info(f"Health check server listening on port {port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.warning(f"Health check server error: {e}")
 
 from telegram.ext import (
     ApplicationBuilder,
@@ -51,6 +69,10 @@ async def on_startup(application):
         logger.warning(f"Failed to delete commands: {e}")
 
 def main():
+    # Start health check server if PORT is provided by Railway / Cloud
+    if os.getenv("PORT"):
+        threading.Thread(target=start_health_check_server, daemon=True).start()
+
     # Initialize Database
     database.init_db()
     print("✅ Database initialized successfully.")
@@ -61,10 +83,6 @@ def main():
         seed_data.seed()
     except Exception as e:
         logger.warning(f"Auto-seed info: {e}")
-
-    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        print("❌ Bot មិនអាចដំណើរការបានទេដោយសារគ្មាន Token។ សូមបំពេញ .env file រួចដំណើរការម្តងទៀត។")
-        return
 
     application = ApplicationBuilder().token(BOT_TOKEN).post_init(on_startup).build()
 
