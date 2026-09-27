@@ -386,3 +386,12 @@ async def admin_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("👋 បានបិទផ្ទាំង Admin Panel។")
+
+async def cmd_reload_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to re-seed and verify all 4 default products"""
+    user = update.effective_user
+    if not is_admin(user):
+        return
+    import seed_data
+    seed_data.seed()
+    await update.message.reply_text("✅ បានបញ្ចូល និងធ្វើបច្ចុប្បន្នភាពផលិតផលទាំង ៤ រួចរាល់ដោយជោគជ័យ!")

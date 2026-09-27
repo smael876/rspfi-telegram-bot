@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 DB_FILE = "shop.db"
 
 def get_connection(db_file: str = DB_FILE) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_file)
+    conn = sqlite3.connect(db_file, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -103,7 +103,11 @@ def add_category(name: str) -> Optional[int]:
             conn.commit()
             return cursor.lastrowid
     except sqlite3.IntegrityError:
-        return None
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM categories WHERE name = ?", (name.strip(),))
+            row = cursor.fetchone()
+            return row["id"] if row else None
 
 def delete_category(category_id: int) -> bool:
     with get_connection() as conn:

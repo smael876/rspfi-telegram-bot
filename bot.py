@@ -183,6 +183,8 @@ def main():
     # 2. Main Commands
     application.add_handler(CommandHandler("start", customer.cmd_start))
     application.add_handler(CommandHandler("admin", admin.cmd_admin))
+    application.add_handler(CommandHandler("seed", admin.cmd_reload_products))
+    application.add_handler(CommandHandler("reload", admin.cmd_reload_products))
     application.add_handler(CommandHandler("help", customer.show_help))
 
     # 3. Customer Menu Button Handlers (Text Regex)
