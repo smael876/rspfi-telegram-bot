@@ -41,6 +41,30 @@ def start_health_check_server():
     except Exception as e:
         logger.warning(f"Health check server error: {e}")
 
+import time
+import urllib.request
+
+def keep_alive_worker():
+    """Keep-alive ping to prevent Render Free tier from sleeping"""
+    app_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("APP_URL")
+    if not app_url:
+        port = os.getenv("PORT")
+        if port:
+            app_url = f"http://127.0.0.1:{port}"
+        else:
+            return
+    logger.info(f"Keep-alive worker started for {app_url}")
+    while True:
+        try:
+            time.sleep(480)  # Ping every 8 minutes
+            req = urllib.request.Request(app_url, headers={"User-Agent": "KeepAlive/1.0"})
+            urllib.request.urlopen(req, timeout=15)
+            logger.info("Keep-alive ping successful.")
+        except Exception as e:
+            logger.debug(f"Keep-alive ping: {e}")
+
+from telegram import Update
+from telegram.request import HTTPXRequest
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -69,9 +93,10 @@ async def on_startup(application):
         logger.warning(f"Failed to delete commands: {e}")
 
 def main():
-    # Start health check server if PORT is provided by Railway / Cloud
-    if os.getenv("PORT"):
+    # Start health check server and keep-alive ping worker
+    if os.getenv("PORT") or os.getenv("RENDER_EXTERNAL_URL") or os.getenv("APP_URL"):
         threading.Thread(target=start_health_check_server, daemon=True).start()
+        threading.Thread(target=keep_alive_worker, daemon=True).start()
 
     # Initialize Database
     database.init_db()
@@ -84,7 +109,23 @@ def main():
     except Exception as e:
         logger.warning(f"Auto-seed info: {e}")
 
-    application = ApplicationBuilder().token(BOT_TOKEN).post_init(on_startup).build()
+    # High-performance HTTP connection pool
+    request = HTTPXRequest(
+        connection_pool_size=20,
+        connect_timeout=10.0,
+        read_timeout=20.0,
+        write_timeout=10.0,
+        pool_timeout=5.0
+    )
+
+    application = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .request(request)
+        .concurrent_updates(True)
+        .post_init(on_startup)
+        .build()
+    )
 
     # ==========================
     # Checkout Conversation
@@ -219,7 +260,7 @@ def main():
 
     # Start Polling
     print("🚀 Telegram Bot កំពុងដំណើរការ... (ចុច Ctrl+C ដើម្បីបញ្ឈប់)")
-    application.run_polling()
+    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":

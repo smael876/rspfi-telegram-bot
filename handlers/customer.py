@@ -10,6 +10,7 @@ from telegram import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     ReplyKeyboardRemove,
+    InputMediaPhoto,
 )
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -49,6 +50,82 @@ def get_direct_telegram_url(target: str) -> str:
 
 DIRECT_SUPPORT_TELEGRAM = get_direct_telegram_url(SUPPORT_TELEGRAM)
 
+# In-memory Telegram file_id cache for instant image loading (<0.1s)
+PHOTO_CACHE = {}
+
+async def send_or_edit_photo(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    photo_path: str,
+    caption: str,
+    reply_markup: InlineKeyboardMarkup,
+    query=None
+):
+    """
+    Sends or edits a photo with in-memory Telegram file_id caching for lightning-fast delivery (<0.1s).
+    """
+    cached_id = PHOTO_CACHE.get(photo_path)
+
+    # 1. If current message already contains a photo and query is provided, edit photo directly in-place!
+    if query and query.message and query.message.photo:
+        try:
+            if cached_id:
+                media = InputMediaPhoto(media=cached_id, caption=caption, parse_mode=ParseMode.HTML)
+                msg = await query.edit_message_media(media=media, reply_markup=reply_markup)
+                if msg and msg.photo:
+                    PHOTO_CACHE[photo_path] = msg.photo[-1].file_id
+                return
+            elif os.path.exists(photo_path):
+                with open(photo_path, "rb") as pf:
+                    media = InputMediaPhoto(media=pf, caption=caption, parse_mode=ParseMode.HTML)
+                    msg = await query.edit_message_media(media=media, reply_markup=reply_markup)
+                    if msg and msg.photo:
+                        PHOTO_CACHE[photo_path] = msg.photo[-1].file_id
+                return
+        except Exception as e:
+            logger.debug(f"edit_message_media fallback: {e}")
+
+    # 2. If it was a text message, delete old message cleanly
+    if query and query.message:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+    # 3. If cached_id exists, send via file_id (instant delivery, 0 bytes uploaded)
+    if cached_id:
+        try:
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=cached_id,
+                caption=caption,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
+            return
+        except Exception as e:
+            logger.debug(f"send_photo cached failed, re-uploading: {e}")
+
+    # 4. Upload photo from disk and store file_id in PHOTO_CACHE
+    if os.path.exists(photo_path):
+        with open(photo_path, "rb") as pf:
+            msg = await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=pf,
+                caption=caption,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
+            if msg and msg.photo:
+                PHOTO_CACHE[photo_path] = msg.photo[-1].file_id
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=caption,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
+
 # Checkout Conversation States
 
 STATE_PHONE, STATE_ADDRESS, STATE_PAYMENT, STATE_KHQR_WAIT = range(4)
@@ -72,7 +149,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 🧼 <b>សាប៊ូអនាម័យ RSPFI Lady Soap</b>\n"
         "• 🌿 <b>វីតាមីនស៊ុល RSPFI Mint (តំបន់សំណើម)</b>\n"
         "• 🍓 <b>វីតាមីនស៊ុល RSPFI Strawberry (តំបន់សំណើម)</b>\n\n"
-        "សូមចុចប៊ូតុងខាងក្រោមដើម្បីពិនិត្យ និងបញ្ជាទិញ៖"
+        "👇 <b>សូមចុចប៊ូតុងខាងក្រោមដើម្បីពិនិត្យ និងបញ្ជាទិញ៖</b>"
     )
     start_inline_markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("🛍️ មើលផលិតផល (View Products)", callback_data="show_all_products")],
@@ -80,11 +157,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     await update.message.reply_text(
         welcome_text,
-        reply_markup=ReplyKeyboardRemove(),
-        parse_mode=ParseMode.HTML
-    )
-    await update.message.reply_text(
-        "👇 <b>ចុចប៊ូតុងខាងក្រោមដើម្បីមើលផលិតផលភ្លាមៗ៖</b>",
         reply_markup=start_inline_markup,
         parse_mode=ParseMode.HTML
     )
@@ -130,6 +202,7 @@ async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
         try:
             if update.callback_query.message.photo:
+                await update.callback_query.message.delete()
                 await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
             else:
                 await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
@@ -267,31 +340,18 @@ async def on_product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     reply_markup = get_product_keyboard(product["id"], product["category_id"], product["price"], qty=1)
 
 
-    # លុបសារចាស់ ឬផ្ញើរូបភាពថ្មី
+    # ផ្ញើរូបភាព ឬកែប្រែរូបភាពចាស់ដោយរលូន និងលឿនបំផុត (Cached file_id)
     if product.get("image_url"):
         img_val = product["image_url"]
-        try:
-            await query.message.delete()
-            if os.path.exists(img_val):
-                with open(img_val, "rb") as photo_file:
-                    await context.bot.send_photo(
-                        chat_id=query.message.chat_id,
-                        photo=photo_file,
-                        caption=details,
-                        reply_markup=reply_markup,
-                        parse_mode=ParseMode.HTML
-                    )
-            else:
-                await context.bot.send_photo(
-                    chat_id=query.message.chat_id,
-                    photo=img_val,
-                    caption=details,
-                    reply_markup=reply_markup,
-                    parse_mode=ParseMode.HTML
-                )
-            return
-        except Exception as e:
-            logger.warning(f"Failed to send photo: {e}")
+        await send_or_edit_photo(
+            context=context,
+            chat_id=query.message.chat_id,
+            photo_path=img_val,
+            caption=details,
+            reply_markup=reply_markup,
+            query=query
+        )
+        return
 
     await query.edit_message_text(
         text=details,
@@ -329,7 +389,6 @@ async def show_product_qr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👉 លោកអ្នកអាចស្កេនទូទាត់រួចចុច <b>'⚡ បញ្ជាទិញភ្លាមៗ'</b> ខាងក្រោម៖"
     )
 
-
     keyboard = [
         [InlineKeyboardButton("⚡ បញ្ជាទិញភ្លាមៗ (សេវា 1.50ដុល្លារ)", callback_data=f"buynow_{product['id']}")],
         [InlineKeyboardButton("💬 សាកសួរព័ត៌មានបន្ថែម (Direct Chat)", url=DIRECT_SUPPORT_TELEGRAM)],
@@ -340,24 +399,15 @@ async def show_product_qr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-
     qr_path = "images/aba_khqr.jpg"
-    try:
-        await query.message.delete()
-        if os.path.exists(qr_path):
-            with open(qr_path, "rb") as f:
-                await context.bot.send_photo(
-                    chat_id=query.message.chat_id,
-                    photo=f,
-                    caption=caption,
-                    reply_markup=reply_markup,
-                    parse_mode=ParseMode.HTML
-                )
-                return
-    except Exception as e:
-        logger.warning(f"Failed to send QR photo: {e}")
-
-    await query.message.reply_text(caption, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    await send_or_edit_photo(
+        context=context,
+        chat_id=query.message.chat_id,
+        photo_path=qr_path,
+        caption=caption,
+        reply_markup=reply_markup,
+        query=query
+    )
 
 
 
@@ -845,30 +895,14 @@ async def checkout_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"━━━━━━━━━━━━━━\n"
             f"📸 <i>បន្ទាប់ពីស្កេនទូទាត់រួច សូមចុចប៊ូតុង <b>'📸 ផ្ញើរូបវិក្កយបត្រក្នុង Bot នេះ'</b> ខាងក្រោម ដើម្បីផ្ញើរូបភាពវិក្កយបត្រ (Slip) ផ្ទៀងផ្ទាត់ និងរៀបចំផ្ញើទំនិញជូន!</i>"
         )
-
-        if os.path.exists("images/aba_khqr.jpg"):
-            try:
-                with open("images/aba_khqr.jpg", "rb") as qr_f:
-                    await context.bot.send_photo(
-                        chat_id=query.message.chat_id,
-                        photo=qr_f,
-                        caption=qr_caption,
-                        reply_markup=InlineKeyboardMarkup(qr_buttons),
-                        parse_mode=ParseMode.HTML
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to send ABA QR image: {e}")
-                await query.message.reply_text(
-                    qr_caption,
-                    reply_markup=InlineKeyboardMarkup(qr_buttons),
-                    parse_mode=ParseMode.HTML
-                )
-        else:
-            await query.message.reply_text(
-                qr_caption,
-                reply_markup=InlineKeyboardMarkup(qr_buttons),
-                parse_mode=ParseMode.HTML
-            )
+        await send_or_edit_photo(
+            context=context,
+            chat_id=query.message.chat_id,
+            photo_path="images/aba_khqr.jpg",
+            caption=qr_caption,
+            reply_markup=InlineKeyboardMarkup(qr_buttons),
+            query=query
+        )
 
         # ជូនដំណឹងទៅ Admin ផ្ទាល់ភ្លាមៗ
         await send_order_to_admin(context, order_id, query.from_user)

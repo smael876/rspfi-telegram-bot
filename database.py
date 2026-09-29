@@ -12,6 +12,11 @@ def init_db(db_file: str = DB_FILE) -> None:
     """បង្កើតតារាងទាំងអស់ក្នុង Database ប្រសិនបើមិនទាន់មាន"""
     with get_connection(db_file) as conn:
         cursor = conn.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+        except Exception:
+            pass
         
         # Categories Table
         cursor.execute("""
