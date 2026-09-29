@@ -14,7 +14,9 @@ if sys.platform == "win32":
 # Load environment variables from .env
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "8878287624:AAGMUN0Y-5bfA1Erq5Pmsn4ZrfXQSOP8ZSM"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    logger.warning("BOT_TOKEN environment variable is not set!")
 
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler

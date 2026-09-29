@@ -9,7 +9,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: BOT_TOKEN
-        value: 8878287624:AAGMUN0Y-5bfA1Erq5Pmsn4ZrfXQSOP8ZSM
+        sync: false
       - key: ADMIN_ID
         value: "5775087092"
       - key: ADMIN_USERNAME
@@ -18,3 +18,5 @@ services:
         value: https://t.me/ceo_yanFi
       - key: DELIVERY_FEE
         value: "1.50"
+      - key: APP_URL
+        value: https://rspfi-telegram-bot.onrender.com
