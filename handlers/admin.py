@@ -21,8 +21,18 @@ import database
 logger = logging.getLogger(__name__)
 
 CURRENCY = os.getenv("CURRENCY", "$")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip().lstrip("@").lower()
+
+DEFAULT_ADMIN_IDS = [5775087092]
+for _part in os.getenv("ADMIN_ID", "5775087092").split(","):
+    if _part.strip().isdigit() and int(_part.strip()) != 0:
+        if int(_part.strip()) not in DEFAULT_ADMIN_IDS:
+            DEFAULT_ADMIN_IDS.append(int(_part.strip()))
+
+ADMIN_USERNAMES = {"smael6667", "rspfi_brand67", "ceo_yanfi"}
+for _u in os.getenv("ADMIN_USERNAME", "Smael6667,RSPFI_brand67,ceo_yanFi").split(","):
+    _clean_u = _u.strip().lstrip("@").lower()
+    if _clean_u:
+        ADMIN_USERNAMES.add(_clean_u)
 
 # States for Adding Product
 ADD_PROD_CAT, ADD_PROD_NAME, ADD_PROD_DESC, ADD_PROD_PRICE, ADD_PROD_IMG = range(5)
@@ -33,13 +43,11 @@ ADD_CAT_NAME = range(10, 11)
 def is_admin(user) -> bool:
     if not user:
         return False
-    if ADMIN_ID != 0 and user.id == ADMIN_ID:
+    if user.username and user.username.lower() in ADMIN_USERNAMES:
+        database.add_admin_id(user.id)
         return True
-    if ADMIN_USERNAME and user.username and user.username.lower() == ADMIN_USERNAME:
-        database.set_setting("admin_id", str(user.id))
-        return True
-    stored_admin_id = database.get_setting("admin_id")
-    if stored_admin_id and str(user.id) == stored_admin_id:
+    all_ids = database.get_all_admin_ids(DEFAULT_ADMIN_IDS)
+    if user.id in all_ids:
         return True
     return False
 
@@ -372,12 +380,40 @@ async def admin_order_details(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def admin_update_order_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if query.from_user:
+        is_admin(query.from_user)
     parts = query.data.split("_")
     order_id = int(parts[1])
     new_status = parts[2]
 
     database.update_order_status(order_id, new_status)
     await query.answer(f"✅ បានផ្លាស់ប្តូរស្ថានភាពទៅជា '{new_status}'", show_alert=True)
+
+    # Notify customer about the status update
+    order = database.get_order_details(order_id)
+    if order and order.get("user_id"):
+        try:
+            cust_msg = (
+                f"🔔 <b>ដំណឹងអំពីការបញ្ជាទិញ #{order_id} របស់លោកអ្នក៖</b>\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"🚦 ស្ថានភាពបច្ចុប្បន្ន: <b>{new_status}</b>\n"
+                f"💰 ទឹកប្រាក់សរុប: <b>{CURRENCY}{order['total_amount']:.2f}</b>\n\n"
+                f"🙏 សូមអរគុណសម្រាប់ការគាំទ្រហាងយើងខ្ញុំ!"
+            )
+            cust_kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("💬 ឆាតសួរព័ត៌មាន ១", url="https://t.me/ceo_yanFi"),
+                    InlineKeyboardButton("💬 អ្នកតបឆាត ២", url="https://t.me/RSPFI_brand67")
+                ]
+            ])
+            await context.bot.send_message(
+                chat_id=int(order["user_id"]),
+                text=cust_msg,
+                reply_markup=cust_kb,
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.debug(f"Could not notify customer for order #{order_id}: {e}")
 
     # Refresh details view safely
     await render_order_details(query, order_id)

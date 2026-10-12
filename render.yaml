@@ -13,9 +13,11 @@ services:
       - key: ADMIN_ID
         value: "5775087092"
       - key: ADMIN_USERNAME
-        value: Smael6667
+        value: Smael6667,RSPFI_brand67,ceo_yanFi
       - key: SUPPORT_TELEGRAM
         value: https://t.me/ceo_yanFi
+      - key: SUPPORT_TELEGRAM_2
+        value: https://t.me/RSPFI_brand67
       - key: DELIVERY_FEE
         value: "1.50"
       - key: APP_URL

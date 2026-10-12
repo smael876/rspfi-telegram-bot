@@ -352,3 +352,32 @@ def set_setting(key: str, value: str) -> None:
         """, (key, str(value)))
         conn.commit()
 
+def add_admin_id(admin_id: int) -> None:
+    """បន្ថែម Admin ID ទៅក្នុងបញ្ជី Admin ទាំងអស់"""
+    if not admin_id or int(admin_id) == 0:
+        return
+    current = get_setting("admin_ids", "") or ""
+    ids = {x.strip() for x in current.split(",") if x.strip().isdigit()}
+    ids.add(str(int(admin_id)))
+    set_setting("admin_ids", ",".join(sorted(ids)))
+    set_setting("admin_id", str(int(admin_id)))
+
+def get_all_admin_ids(default_ids: Optional[List[int]] = None) -> List[int]:
+    """ទាញយកបញ្ជី Admin IDs ទាំងអស់ដើម្បីផ្ញើដំណឹងគ្រប់គ្នា"""
+    ids = set()
+    if default_ids:
+        for d in default_ids:
+            try:
+                if d and int(d) != 0:
+                    ids.add(int(d))
+            except ValueError:
+                pass
+    single_id = get_setting("admin_id")
+    if single_id and single_id.strip().isdigit():
+        ids.add(int(single_id.strip()))
+    multi_ids = get_setting("admin_ids", "") or ""
+    for x in multi_ids.split(","):
+        if x.strip().isdigit():
+            ids.add(int(x.strip()))
+    return sorted(ids)
+

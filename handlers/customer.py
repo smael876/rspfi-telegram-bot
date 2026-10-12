@@ -27,9 +27,23 @@ logger = logging.getLogger(__name__)
 
 CURRENCY = os.getenv("CURRENCY", "$")
 SHOP_NAME = os.getenv("SHOP_NAME", "RSPFI Store")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "5775087092"))
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Smael6667").strip().lstrip("@").lower()
+
+DEFAULT_ADMIN_IDS = [5775087092]
+for _part in os.getenv("ADMIN_ID", "5775087092").split(","):
+    if _part.strip().isdigit() and int(_part.strip()) != 0:
+        if int(_part.strip()) not in DEFAULT_ADMIN_IDS:
+            DEFAULT_ADMIN_IDS.append(int(_part.strip()))
+
+ADMIN_ID = DEFAULT_ADMIN_IDS[0]
+
+ADMIN_USERNAMES = {"smael6667", "rspfi_brand67", "ceo_yanfi"}
+for _u in os.getenv("ADMIN_USERNAME", "Smael6667,RSPFI_brand67,ceo_yanFi").split(","):
+    _clean_u = _u.strip().lstrip("@").lower()
+    if _clean_u:
+        ADMIN_USERNAMES.add(_clean_u)
+
 SUPPORT_TELEGRAM = os.getenv("SUPPORT_TELEGRAM", "https://t.me/ceo_yanFi")
+SUPPORT_TELEGRAM_2 = os.getenv("SUPPORT_TELEGRAM_2", "https://t.me/RSPFI_brand67")
 DELIVERY_FEE = float(os.getenv("DELIVERY_FEE", "1.50"))
 
 def get_direct_telegram_url(target: str) -> str:
@@ -49,6 +63,16 @@ def get_direct_telegram_url(target: str) -> str:
     return target
 
 DIRECT_SUPPORT_TELEGRAM = get_direct_telegram_url(SUPPORT_TELEGRAM)
+DIRECT_SUPPORT_TELEGRAM_2 = get_direct_telegram_url(SUPPORT_TELEGRAM_2)
+
+def register_admin_if_match(user) -> bool:
+    """កត់ត្រា Admin ID ដោយស្វ័យប្រវត្តិប្រសិនបើ Username ស្ថិតក្នុងបញ្ជី Admin"""
+    if not user:
+        return False
+    if user.username and user.username.lower() in ADMIN_USERNAMES:
+        database.add_admin_id(user.id)
+        return True
+    return False
 
 # In-memory Telegram file_id cache for instant image loading (<0.1s)
 PHOTO_CACHE = {}
@@ -138,8 +162,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     # ប្រសិនបើអ្នកចុច Start គឺជា Admin យើងកត់ត្រា ID ស្វ័យប្រវត្តិ
-    if ADMIN_USERNAME and user.username and user.username.lower() == ADMIN_USERNAME:
-        database.set_setting("admin_id", str(user.id))
+    is_reg_admin = register_admin_if_match(user)
 
     welcome_text = (
         f"👋 សួស្តី <b>{user.first_name}</b>!\n"
@@ -151,9 +174,19 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 🍓 <b>វីតាមីនស៊ុល RSPFI Strawberry (តំបន់សំណើម)</b>\n\n"
         "👇 <b>សូមចុចប៊ូតុងខាងក្រោមដើម្បីពិនិត្យ និងបញ្ជាទិញ៖</b>"
     )
+    if is_reg_admin:
+        welcome_text += (
+            f"\n\n🛡️ <b>គណនី Admin (@{user.username}) បានភ្ជាប់ដោយជោគជ័យ!</b>\n"
+            "• រាល់ការបញ្ជាទិញ និងវិក្កយបត្ររបស់អតិថិជននឹងលោតចូលទីនេះដោយស្វ័យប្រវត្តិ\n"
+            "• វាយបញ្ជា /admin ដើម្បីចូលផ្ទាំងគ្រប់គ្រងហាង"
+        )
+
     start_inline_markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("🛍️ មើលផលិតផល (View Products)", callback_data="show_all_products")],
-        [InlineKeyboardButton("💬 សាកសួរព័ត៌មាន (Direct Chat)", url=DIRECT_SUPPORT_TELEGRAM)]
+        [
+            InlineKeyboardButton("💬 ឆាតសួរព័ត៌មាន ១ (@ceo_yanFi)", url=DIRECT_SUPPORT_TELEGRAM),
+            InlineKeyboardButton("💬 អ្នកតបឆាត ២ (@RSPFI_brand67)", url=DIRECT_SUPPORT_TELEGRAM_2)
+        ]
     ])
     await update.message.reply_text(
         welcome_text,
@@ -163,6 +196,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """បង្ហាញបញ្ជីផលិតផលទាំងអស់ (Products List) ជាមួយប៊ូតុងជ្រើសរើស"""
+    register_admin_if_match(update.effective_user)
     products = database.get_all_products()
     if not products:
         text = "⚠️ បច្ចុប្បន្នមិនទាន់មានផលិតផលដាក់លក់នៅឡើយទេ។ សូមរង់ចាំបន្តិច!"
@@ -192,7 +226,8 @@ async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
 
     keyboard.append([
-        InlineKeyboardButton("💬 សាកសួរព័ត៌មាន (Direct Chat)", url=DIRECT_SUPPORT_TELEGRAM)
+        InlineKeyboardButton("💬 ឆាតសួរព័ត៌មាន ១", url=DIRECT_SUPPORT_TELEGRAM),
+        InlineKeyboardButton("💬 អ្នកតបឆាត ២", url=DIRECT_SUPPORT_TELEGRAM_2)
     ])
 
     text = "\n".join(lines)
@@ -282,10 +317,14 @@ def get_product_keyboard(product_id: int, category_id: int, price: float, qty: i
         [
             InlineKeyboardButton(f"📦 បញ្ជាទិញ {qty} ប្រអប់ — {CURRENCY}{total_with_del:.2f} (សេវា 1.50ដុល្លារ)", callback_data=f"buynow_{product_id}_{qty}")
         ],
-        # QR Code & Support Chat
+        # QR Code
         [
-            InlineKeyboardButton("📱 ស្កេន QR ទូទាត់", callback_data=f"showqr_{product_id}"),
-            InlineKeyboardButton("💬 សាកសួរព័ត៌មាន (Direct Chat)", url=DIRECT_SUPPORT_TELEGRAM)
+            InlineKeyboardButton("📱 ស្កេន QR ទូទាត់", callback_data=f"showqr_{product_id}")
+        ],
+        # Support Chat (Both Admins)
+        [
+            InlineKeyboardButton("💬 ឆាតសួរព័ត៌មាន ១", url=DIRECT_SUPPORT_TELEGRAM),
+            InlineKeyboardButton("💬 អ្នកតបឆាត ២", url=DIRECT_SUPPORT_TELEGRAM_2)
         ],
         [
             InlineKeyboardButton("🛍️ មើលផលិតផលផ្សេងទៀត", callback_data="show_all_products")
@@ -321,6 +360,7 @@ async def on_product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     """បង្ហាញព័ត៌មានលម្អិតរបស់ទំនិញ (រូបភាព, តម្លៃ, ការពិពណ៌នា, ប៊ូតុងបញ្ជាទិញ)"""
     query = update.callback_query
     await query.answer()
+    register_admin_if_match(update.effective_user)
 
     product_id = int(query.data.split("_")[1])
     product = database.get_product(product_id)
@@ -391,7 +431,10 @@ async def show_product_qr(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("⚡ បញ្ជាទិញភ្លាមៗ (សេវា 1.50ដុល្លារ)", callback_data=f"buynow_{product['id']}")],
-        [InlineKeyboardButton("💬 សាកសួរព័ត៌មានបន្ថែម (Direct Chat)", url=DIRECT_SUPPORT_TELEGRAM)],
+        [
+            InlineKeyboardButton("💬 ឆាតសួរព័ត៌មាន ១", url=DIRECT_SUPPORT_TELEGRAM),
+            InlineKeyboardButton("💬 អ្នកតបឆាត ២", url=DIRECT_SUPPORT_TELEGRAM_2)
+        ],
         [
             InlineKeyboardButton("🛍️ មើលផលិតផល", callback_data="show_all_products"),
             InlineKeyboardButton("🔙 ត្រឡប់ទៅផលិតផលវិញ", callback_data=f"prod_{product['id']}")
@@ -701,10 +744,10 @@ async def checkout_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await prompt_payment(update, context)
 
 async def send_order_to_admin(context: ContextTypes.DEFAULT_TYPE, order_id: int, cust_user, slip_photo_file_id: Optional[str] = None, time_validation_info: Optional[dict] = None):
-    """ផ្ញើសារជូនដំណឹងទៅ Admin តែនៅពេលអតិថិជនបានទូទាត់រួចរាល់ ឬជ្រើសរើស COD ប៉ុណ្ណោះ"""
-    target_admin_id = ADMIN_ID if (ADMIN_ID and ADMIN_ID != 0) else database.get_setting("admin_id")
-    if not target_admin_id:
-        logger.warning(f"No admin_id configured to notify for order #{order_id}")
+    """ផ្ញើសារជូនដំណឹងទៅ Admin ទាំងអស់ នៅពេលអតិថិជនបានទូទាត់រួចរាល់ ឬជ្រើសរើស COD"""
+    all_admin_ids = database.get_all_admin_ids(DEFAULT_ADMIN_IDS)
+    if not all_admin_ids:
+        logger.warning(f"No admin_ids configured to notify for order #{order_id}")
         return
 
     order = database.get_order_details(order_id)
@@ -806,28 +849,32 @@ async def send_order_to_admin(context: ContextTypes.DEFAULT_TYPE, order_id: int,
             InlineKeyboardButton("🚚 កំពុងដឹក (Shipping)", callback_data=f"status_{order_id}_កំពុងដឹកជញ្ជូន")
         ])
 
-    if cust_user and cust_user.username:
-        admin_buttons.append([InlineKeyboardButton("💬 ឆាតទៅអតិថិជន", url=f"https://t.me/{cust_user.username}")])
+    if cust_user:
+        if cust_user.username:
+            admin_buttons.append([InlineKeyboardButton(f"💬 ឆាតផ្ទាល់ទៅអតិថិជន (@{cust_user.username})", url=f"https://t.me/{cust_user.username}")])
+        else:
+            admin_buttons.append([InlineKeyboardButton("💬 ឆាតផ្ទាល់ទៅអតិថិជន (Direct Chat)", url=f"tg://user?id={cust_user.id}")])
     admin_buttons.append([InlineKeyboardButton("📋 គ្រប់គ្រងកុម្ម៉ង់នេះក្នុង Admin", callback_data=f"adm_ord_{order_id}")])
 
-    try:
-        if slip_photo_file_id:
-            await context.bot.send_photo(
-                chat_id=int(target_admin_id),
-                photo=slip_photo_file_id,
-                caption=f"🧾 <b>វិក្កយបត្របង់ប្រាក់ (Slip) កុម្ម៉ង់ #{order_id}</b>\n\n" + admin_alert,
-                reply_markup=InlineKeyboardMarkup(admin_buttons),
-                parse_mode=ParseMode.HTML
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=int(target_admin_id),
-                text=admin_alert,
-                reply_markup=InlineKeyboardMarkup(admin_buttons),
-                parse_mode=ParseMode.HTML
-            )
-    except Exception as e:
-        logger.error(f"Failed to notify admin for order #{order_id}: {e}")
+    for target_admin_id in all_admin_ids:
+        try:
+            if slip_photo_file_id:
+                await context.bot.send_photo(
+                    chat_id=int(target_admin_id),
+                    photo=slip_photo_file_id,
+                    caption=f"🧾 <b>វិក្កយបត្របង់ប្រាក់ (Slip) កុម្ម៉ង់ #{order_id}</b>\n\n" + admin_alert,
+                    reply_markup=InlineKeyboardMarkup(admin_buttons),
+                    parse_mode=ParseMode.HTML
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=int(target_admin_id),
+                    text=admin_alert,
+                    reply_markup=InlineKeyboardMarkup(admin_buttons),
+                    parse_mode=ParseMode.HTML
+                )
+        except Exception as e:
+            logger.error(f"Failed to notify admin {target_admin_id} for order #{order_id}: {e}")
 
 
 async def checkout_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -880,6 +927,10 @@ async def checkout_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         qr_buttons = [
             [InlineKeyboardButton("📸 ផ្ញើរូបវិក្កយបត្រក្នុង Bot នេះ", callback_data=f"khqr_paid_{order_id}")],
+            [
+                InlineKeyboardButton("💬 ឆាតសួរព័ត៌មាន ១", url=DIRECT_SUPPORT_TELEGRAM),
+                InlineKeyboardButton("💬 អ្នកតបឆាត ២", url=DIRECT_SUPPORT_TELEGRAM_2)
+            ],
             [InlineKeyboardButton("❌ បោះបង់ការទិញ", callback_data=f"khqr_cancel_{order_id}")]
         ]
 
@@ -928,15 +979,16 @@ async def checkout_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text(
         customer_msg,
         reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛍️ មើលផលិតផលបន្ត", callback_data="show_all_products")],
             [
-                InlineKeyboardButton("🛍️ មើលផលិតផលបន្ត", callback_data="show_all_products"),
-                InlineKeyboardButton("💬 ទាក់ទងហាង (Direct)", url=DIRECT_SUPPORT_TELEGRAM)
+                InlineKeyboardButton("💬 ឆាតសួរព័ត៌មាន ១", url=DIRECT_SUPPORT_TELEGRAM),
+                InlineKeyboardButton("💬 អ្នកតបឆាត ២", url=DIRECT_SUPPORT_TELEGRAM_2)
             ]
         ]),
         parse_mode=ParseMode.HTML
     )
 
-    # COD -> Auto Direct ទៅ Admin ភ្លាមៗ
+    # COD -> Auto Direct ទៅ Admin ទាំងអស់ភ្លាមៗ
     await send_order_to_admin(context, order_id, query.from_user)
 
     context.user_data.pop("checkout", None)
@@ -1175,9 +1227,10 @@ async def on_khqr_slip_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(
         invoice_msg,
         reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛍️ មើលផលិតផលបន្ត", callback_data="show_all_products")],
             [
-                InlineKeyboardButton("🛍️ មើលផលិតផលបន្ត", callback_data="show_all_products"),
-                InlineKeyboardButton("💬 ទាក់ទងហាង (Direct)", url=DIRECT_SUPPORT_TELEGRAM)
+                InlineKeyboardButton("💬 ឆាតសួរព័ត៌មាន ១", url=DIRECT_SUPPORT_TELEGRAM),
+                InlineKeyboardButton("💬 អ្នកតបឆាត ២", url=DIRECT_SUPPORT_TELEGRAM_2)
             ]
         ]),
         parse_mode=ParseMode.HTML
@@ -1259,7 +1312,9 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """បង្ហាញព័ត៌មានជំនួយ និងទំនាក់ទំនង"""
+    register_admin_if_match(update.effective_user)
     support_username = SUPPORT_TELEGRAM.rstrip("/").split("/")[-1].lstrip("@")
+    support_username_2 = SUPPORT_TELEGRAM_2.rstrip("/").split("/")[-1].lstrip("@")
     help_text = (
         f"ℹ️ <b>ជំនួយ និងទំនាក់ទំនងហាង {SHOP_NAME}</b>\n\n"
         "🛍️ <b>របៀបបញ្ជាទិញ៖</b>\n"
@@ -1267,13 +1322,17 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2. ចុច <b>'📦 បញ្ជាទិញ (Order)'</b>\n"
         "3. បញ្ចូលលេខទូរស័ព្ទ និងអាសយដ្ឋានដឹកជញ្ជូន\n"
         "4. ស្កេនទូទាត់ប្រាក់តាម <b>ABA' KHQR</b> បានយ៉ាងងាយស្រួល!\n\n"
-        "📞 <b>ទំនាក់ទំនងសាកសួរព័ត៌មានបន្ថែម៖</b>\n"
-        f"• Telegram ផ្ទាល់៖ <a href='{DIRECT_SUPPORT_TELEGRAM}'>@{support_username}</a>\n"
+        "📞 <b>ទំនាក់ទំនងសាកសួរព័ត៌មានបន្ថែម (២៤ ម៉ោង)៖</b>\n"
+        f"• Telegram ទី១៖ <a href='{DIRECT_SUPPORT_TELEGRAM}'>@{support_username}</a>\n"
+        f"• Telegram អ្នកតបឆាតទី២៖ <a href='{DIRECT_SUPPORT_TELEGRAM_2}'>@{support_username_2}</a>\n"
         "• សេវាដឹកជញ្ជូនរហ័សទូទាំង ២៥ រាជធានី-ខេត្ត 🚚\n"
     )
     keyboard = [
         [InlineKeyboardButton("🛍️ មើលផលិតផល (View Products)", callback_data="show_all_products")],
-        [InlineKeyboardButton(f"💬 ឆាតសាកសួរព័ត៌មាន (@{support_username})", url=DIRECT_SUPPORT_TELEGRAM)]
+        [
+            InlineKeyboardButton(f"💬 ឆាតសួរព័ត៌មាន ១ (@{support_username})", url=DIRECT_SUPPORT_TELEGRAM),
+            InlineKeyboardButton(f"💬 អ្នកតបឆាត ២ (@{support_username_2})", url=DIRECT_SUPPORT_TELEGRAM_2)
+        ]
     ]
     await update.message.reply_text(
         help_text,
