@@ -308,9 +308,12 @@ def get_order_details(order_id: int) -> Optional[Dict[str, Any]]:
         if not order:
             return None
         cursor.execute("SELECT * FROM order_items WHERE order_id = ?", (order_id,))
-        items = cursor.fetchall()
+        items = [dict(item) for item in cursor.fetchall()]
         order_dict = dict(order)
-        order_dict["items"] = [dict(item) for item in items]
+        order_dict["items"] = items
+        items_total = sum(item["price"] * item["quantity"] for item in items)
+        order_dict["items_total"] = items_total
+        order_dict["delivery_fee"] = round(max(0.0, float(order_dict.get("total_amount", items_total)) - items_total), 2)
         return order_dict
 
 def update_order_status(order_id: int, new_status: str) -> bool:

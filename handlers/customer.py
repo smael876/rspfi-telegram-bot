@@ -157,6 +157,32 @@ STATE_PHONE, STATE_ADDRESS, STATE_PAYMENT, STATE_KHQR_WAIT = range(4)
 def get_main_menu_keyboard():
     return ReplyKeyboardRemove()
 
+def is_free_delivery_product(prod: dict) -> bool:
+    if not prod:
+        return False
+    name = str(prod.get("name", ""))
+    desc = str(prod.get("description", ""))
+    price = float(prod.get("price", 0) or 0)
+    return price >= 20.0 or "ហ្វ្រី" in name or "ហ្វ្រី" in desc or "សាប៊ូអនាម័យ+ថ្នាំក្រមុំ" in name
+
+def get_product_delivery_fee(prod: dict) -> float:
+    return 0.0 if is_free_delivery_product(prod) else DELIVERY_FEE
+
+def get_cart_delivery_fee(items: list) -> float:
+    if not items:
+        return DELIVERY_FEE
+    for item in items:
+        if is_free_delivery_product(item) or float(item.get("subtotal", 0) or 0) >= 20.0:
+            return 0.0
+    if sum(float(item.get("subtotal", 0) or 0) for item in items) >= 20.0:
+        return 0.0
+    return DELIVERY_FEE
+
+def format_delivery_fee_text(fee: float) -> str:
+    if fee <= 0:
+        return "ឥតគិតថ្លៃ (ហ្វ្រីសេវាដឹក 🚚)"
+    return f"+{CURRENCY}{fee:.2f} (ឬ {fee*4000:,.0f} ៛)"
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """ស្វាគមន៍អតិថិជន"""
     user = update.effective_user
@@ -168,6 +194,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 សួស្តី <b>{user.first_name}</b>!\n"
         f"សូមស្វាគមន៍មកកាន់ <b>{SHOP_NAME}</b> 🛍️\n\n"
         "យើងខ្ញុំមានលក់ផលិតផលគុណភាពខ្ពស់ដូចជា៖\n"
+        "• 🌸🧼 <b>សាប៊ូអនាម័យ+ថ្នាំក្រមុំម្ដងទៀត ($20 ហ្វ្រីសេវាដឹក)</b>\n"
         "• 🌸 <b>ថ្នាំក្រមុំម្តងទៀត (RSPFI Lady Vaginy)</b>\n"
         "• 🧼 <b>សាប៊ូអនាម័យ RSPFI Lady Soap</b>\n"
         "• 🌿 <b>វីតាមីនស៊ុល RSPFI Mint (តំបន់សំណើម)</b>\n"
@@ -220,6 +247,8 @@ async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price_str = f"{CURRENCY}{prod['price']:.2f}"
         if prod.get("price") == 4.5:
             price_str = "18,000៛ ($4.50)"
+        elif is_free_delivery_product(prod):
+            price_str = f"{CURRENCY}{prod['price']:.0f} ហ្វ្រីដឹក"
         lines.append(f"{idx}. <b>{prod['name']}</b> — <b>{price_str}</b>")
         keyboard.append([
             InlineKeyboardButton(f"👉 {prod['name']} ({price_str})", callback_data=f"prod_{prod['id']}")
@@ -301,21 +330,23 @@ async def on_category_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode=ParseMode.HTML
     )
 
-def get_product_keyboard(product_id: int, category_id: int, price: float, qty: int = 1) -> InlineKeyboardMarkup:
+def get_product_keyboard(product_id: int, category_id: int, price: float, qty: int = 1, prod: Optional[dict] = None) -> InlineKeyboardMarkup:
+    del_fee = get_product_delivery_fee(prod) if prod else (0.0 if price >= 20.0 else DELIVERY_FEE)
     total_prod = price * qty
-    total_with_del = total_prod + DELIVERY_FEE
-    total_khr = total_with_del * 4000
+    total_with_del = total_prod + del_fee
+    del_label = "ហ្វ្រីសេវាដឹក" if del_fee <= 0 else f"សេវា {del_fee:.2f}ដុល្លារ"
+    unit_label = "ឈុត" if del_fee <= 0 else "ប្រអប់"
     
     keyboard = [
         # Quantity controls (+ / -)
         [
             InlineKeyboardButton("➖", callback_data=f"pqty_{product_id}_{max(1, qty - 1)}"),
-            InlineKeyboardButton(f"🔢 ចំនួន: {qty} ប្រអប់", callback_data="pqty_none"),
+            InlineKeyboardButton(f"🔢 ចំនួន: {qty} {unit_label}", callback_data="pqty_none"),
             InlineKeyboardButton("➕", callback_data=f"pqty_{product_id}_{qty + 1}")
         ],
         # Order button (dynamically shows quantity, price, and delivery fee)
         [
-            InlineKeyboardButton(f"📦 បញ្ជាទិញ {qty} ប្រអប់ — {CURRENCY}{total_with_del:.2f} (សេវា 1.50ដុល្លារ)", callback_data=f"buynow_{product_id}_{qty}")
+            InlineKeyboardButton(f"📦 បញ្ជាទិញ {qty} {unit_label} — {CURRENCY}{total_with_del:.2f} ({del_label})", callback_data=f"buynow_{product_id}_{qty}")
         ],
         # QR Code
         [
@@ -350,7 +381,7 @@ async def on_product_qty_change(update: Update, context: ContextTypes.DEFAULT_TY
     if not product:
         return
 
-    new_markup = get_product_keyboard(product_id, product["category_id"], product["price"], qty)
+    new_markup = get_product_keyboard(product_id, product["category_id"], product["price"], qty, prod=product)
     try:
         await query.edit_message_reply_markup(reply_markup=new_markup)
     except Exception as e:
@@ -369,15 +400,20 @@ async def on_product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("⚠️ រកមិនឃើញទំនិញនេះទេ!")
         return
 
+    del_fee = get_product_delivery_fee(product)
+    del_text = "ឥតគិតថ្លៃ (ហ្វ្រីសេវាដឹក 🚚)" if del_fee <= 0 else f"(សេវា {del_fee:.2f}ដុល្លារ)"
+    unit_label = "ឈុត" if del_fee <= 0 else "ប្រអប់"
+
     details = (
         f"🏷️ <b>{product['name']}</b>\n"
         f"📂 ប្រភេទ: {product.get('category_name', 'ទូទៅ')}\n"
-        f"💵 តម្លៃ: <b>{CURRENCY}{product['price']:.2f}</b> / ប្រអប់\n"
-        f"🚚 សេវាដឹកជញ្ជូន: <b>(សេវា 1.50ដុល្លារ)</b>\n\n"
-        f"📝 <b>ការពិពណ៌នា៖</b>\n{product['description']}\n"
+        f"💵 តម្លៃ: <b>{CURRENCY}{product['price']:.2f}</b> / {unit_label}\n"
+        f"🚚 សេវាដឹកជញ្ជូន: <b>{del_text}</b>\n\n"
+        f"📝 <b>ការពិពណ៌នា៖</b>\n{product['description']}\n\n"
+        f"📌 <b>*បញ្ជាក់*៖</b> សួស្តីបងរាល់អីវ៉ាន់ទីតាំងនៅបណ្ដា ខេត្ត តម្រូវឲ្យបង់ប្រាក់មុន បើសិនជាអីវ៉ាន់របស់បងនៅភ្នំពេញទទួលអីវ៉ាន់ចាំបង់ប្រាក់ក៏បានដែរ."
     )
 
-    reply_markup = get_product_keyboard(product["id"], product["category_id"], product["price"], qty=1)
+    reply_markup = get_product_keyboard(product["id"], product["category_id"], product["price"], qty=1, prod=product)
 
 
     # ផ្ញើរូបភាព ឬកែប្រែរូបភាពចាស់ដោយរលូន និងលឿនបំផុត (Cached file_id)
@@ -411,14 +447,16 @@ async def show_product_qr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     price_usd = product["price"]
-    total_usd = price_usd + DELIVERY_FEE
+    del_fee = get_product_delivery_fee(product)
+    total_usd = price_usd + del_fee
     total_khr = total_usd * 4000
+    del_label = "ហ្វ្រីសេវាដឹក" if del_fee <= 0 else f"សេវា {del_fee:.2f}ដុល្លារ"
 
     caption = (
         f"📱 <b>ABA' KHQR សម្រាប់ទូទាត់ប្រាក់</b>\n"
         f"━━━━━━━━━━━━━━\n"
         f"🏷️ ផលិតផល: <b>{product['name']}</b> ({CURRENCY}{price_usd:.2f})\n"
-        f"🚚 សេវាដឹកជញ្ជូន: <b>+{CURRENCY}{DELIVERY_FEE:.2f} (ឬ {DELIVERY_FEE*4000:,.0f} ៛)</b>\n"
+        f"🚚 សេវាដឹកជញ្ជូន: <b>{format_delivery_fee_text(del_fee)}</b>\n"
         f"💰 <b>សរុបត្រូវបង់: {CURRENCY}{total_usd:.2f} (ឬ {total_khr:,.0f} ៛)</b>\n"
         f"━━━━━━━━━━━━━━\n"
         f"👤 ឈ្មោះគណនី: <b>SMAEL SOS</b>\n"
@@ -430,7 +468,7 @@ async def show_product_qr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     keyboard = [
-        [InlineKeyboardButton("⚡ បញ្ជាទិញភ្លាមៗ (សេវា 1.50ដុល្លារ)", callback_data=f"buynow_{product['id']}")],
+        [InlineKeyboardButton(f"⚡ បញ្ជាទិញភ្លាមៗ ({del_label})", callback_data=f"buynow_{product['id']}")],
         [
             InlineKeyboardButton("💬 ឆាតសួរព័ត៌មាន ១", url=DIRECT_SUPPORT_TELEGRAM),
             InlineKeyboardButton("💬 អ្នកតបឆាត ២", url=DIRECT_SUPPORT_TELEGRAM_2)
@@ -486,7 +524,8 @@ async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     subtotal = sum(item["subtotal"] for item in items)
-    grand_total = subtotal + DELIVERY_FEE
+    del_fee = get_cart_delivery_fee(items)
+    grand_total = subtotal + del_fee
     grand_total_khr = grand_total * 4000
     total_qty = sum(item["quantity"] for item in items)
 
@@ -507,7 +546,7 @@ async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines.append(f"\n━━━━━━━━━━━━━━")
     lines.append(f"📦 តម្លៃទំនិញ: <b>{CURRENCY}{subtotal:.2f}</b>")
-    lines.append(f"🚚 សេវាដឹកជញ្ជូន: <b>+{CURRENCY}{DELIVERY_FEE:.2f} (ឬ {DELIVERY_FEE*4000:,.0f} ៛)</b>")
+    lines.append(f"🚚 សេវាដឹកជញ្ជូន: <b>{format_delivery_fee_text(del_fee)}</b>")
     lines.append(f"💰 <b>សរុបទាំងអស់: {CURRENCY}{grand_total:.2f} (ឬ {grand_total_khr:,.0f} ៛)</b>")
 
     order_btn_text = f"📦 បញ្ជាទិញ (Order) {total_qty} ប្រអប់ — {CURRENCY}{grand_total:.2f}"
@@ -560,7 +599,8 @@ async def on_cart_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     subtotal = sum(item["subtotal"] for item in items)
-    grand_total = subtotal + DELIVERY_FEE
+    del_fee = get_cart_delivery_fee(items)
+    grand_total = subtotal + del_fee
     grand_total_khr = grand_total * 4000
     total_qty = sum(item["quantity"] for item in items)
 
@@ -580,7 +620,7 @@ async def on_cart_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines.append(f"\n━━━━━━━━━━━━━━")
     lines.append(f"📦 តម្លៃទំនិញ: <b>{CURRENCY}{subtotal:.2f}</b>")
-    lines.append(f"🚚 សេវាដឹកជញ្ជូន: <b>+{CURRENCY}{DELIVERY_FEE:.2f} (ឬ {DELIVERY_FEE*4000:,.0f} ៛)</b>")
+    lines.append(f"🚚 សេវាដឹកជញ្ជូន: <b>{format_delivery_fee_text(del_fee)}</b>")
     lines.append(f"💰 <b>សរុបទាំងអស់: {CURRENCY}{grand_total:.2f} (ឬ {grand_total_khr:,.0f} ៛)</b>")
 
     order_btn_text = f"📦 បញ្ជាទិញ (Order) {total_qty} ប្រអប់ — {CURRENCY}{grand_total:.2f}"
@@ -610,6 +650,7 @@ async def checkout_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts = data.split("_")
             product_id = int(parts[1])
             qty = int(parts[2]) if len(parts) > 2 else 1
+            database.clear_cart(user_id)
             database.add_to_cart(user_id, product_id, quantity=qty)
 
 
@@ -622,10 +663,14 @@ async def checkout_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🛒 កន្ត្រករបស់អ្នកទទេស្អាត!")
         return ConversationHandler.END
 
+    del_fee = get_cart_delivery_fee(cart_items)
+    del_note = "ឥតគិតថ្លៃ (ហ្វ្រីសេវាដឹកជញ្ជូន 🚚)" if del_fee <= 0 else f"សេវាដឹកជញ្ជូន {del_fee:.2f}ដុល្លារ បូកបញ្ចូលក្នុងវិក្កយបត្រ"
+
     # Reset user checkout data
     context.user_data["checkout"] = {
         "user_id": user_id,
         "name": update.effective_user.full_name or "អតិថិជន",
+        "delivery_fee": del_fee,
     }
 
     cancel_keyboard = InlineKeyboardMarkup([
@@ -634,7 +679,8 @@ async def checkout_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         "📦 <b>សុំលេខទូរស័ព្ទ និងទីតាំងរបស់អ្នកមួយ ងាយស្រួលខាងយើងខ្ញុំរៀបចំអីវ៉ាន់ដាក់ផ្ញើជូន។</b>\n\n"
-        "🚚 <i>(សេវាដឹកជញ្ជូន 1.50ដុល្លារ បូកបញ្ចូលក្នុងវិក្កយបត្រ)</i>\n"
+        "📌 <b>*បញ្ជាក់*៖ សួស្តីបងរាល់អីវ៉ាន់ទីតាំងនៅបណ្ដា ខេត្ត តម្រូវឲ្យបង់ប្រាក់មុន បើសិនជាអីវ៉ាន់របស់បងនៅភ្នំពេញទទួលអីវ៉ាន់ចាំបង់ប្រាក់ក៏បានដែរ.</b>\n\n"
+        f"🚚 <i>({del_note})</i>\n"
         "<i>(លោកអ្នកអាចវាយបញ្ចូលទាំងលេខទូរស័ព្ទ និងទីតាំងដឹកជញ្ជូន ផ្ញើមកកាន់ទីនេះបានភ្លាមៗ)</i>"
     )
 
@@ -650,13 +696,17 @@ async def prompt_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     checkout_data = context.user_data.get("checkout", {})
     phone = checkout_data.get("phone", "")
     address = checkout_data.get("address", "")
+    cart_items = database.get_cart(update.effective_user.id)
+    del_fee = get_cart_delivery_fee(cart_items)
+    checkout_data["delivery_fee"] = del_fee
+    del_text = "ឥតគិតថ្លៃ (ហ្វ្រីសេវាដឹក 🚚)" if del_fee <= 0 else f"(សេវា {del_fee:.2f}ដុល្លារ)"
 
     keyboard = [
         [
-            InlineKeyboardButton("💵 សាច់ប្រាក់ផ្ទាល់ (Cash on Delivery)", callback_data="pay_cash"),
+            InlineKeyboardButton("💵 សាច់ប្រាក់ផ្ទាល់ (Cash on Delivery - ភ្នំពេញ)", callback_data="pay_cash"),
         ],
         [
-            InlineKeyboardButton("📱 ស្កេន KHQR (ABA / Bakong)", callback_data="pay_khqr"),
+            InlineKeyboardButton("📱 ស្កេន KHQR បង់ប្រាក់មុន (ភ្នំពេញ & បណ្ដាខេត្ត)", callback_data="pay_khqr"),
         ],
         [
             InlineKeyboardButton("❌ បោះបង់ការទិញ", callback_data="checkout_cancel")
@@ -667,7 +717,8 @@ async def prompt_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ <b>ទទួលបានព័ត៌មានដឹកជញ្ជូន៖</b>\n"
         f"📞 លេខទូរស័ព្ទ: <code>{phone}</code>\n"
         f"📍 ទីតាំងដឹកជញ្ជូន: <code>{address}</code>\n"
-        "🚚 សេវាដឹកជញ្ជូន: <b>(សេវា 1.50ដុល្លារ)</b>\n\n"
+        f"🚚 សេវាដឹកជញ្ជូន: <b>{del_text}</b>\n\n"
+        "📌 <b>*បញ្ជាក់*៖ សួស្តីបងរាល់អីវ៉ាន់ទីតាំងនៅបណ្ដា ខេត្ត តម្រូវឲ្យបង់ប្រាក់មុន បើសិនជាអីវ៉ាន់របស់បងនៅភ្នំពេញទទួលអីវ៉ាន់ចាំបង់ប្រាក់ក៏បានដែរ.</b>\n\n"
         "💳 <b>សូមជ្រើសរើសវិធីសាស្ត្រទូទាត់ប្រាក់៖</b>"
     )
 
@@ -767,7 +818,7 @@ async def send_order_to_admin(context: ContextTypes.DEFAULT_TYPE, order_id: int,
     items_text = "\n".join(item_lines) if item_lines else "• គ្មានមុខទំនិញ"
 
     items_total = sum(item["price"] * item["quantity"] for item in items)
-    delivery_fee = order.get("delivery_fee", DELIVERY_FEE)
+    delivery_fee = order.get("delivery_fee", 0.0 if items_total >= 20.0 else DELIVERY_FEE)
     total = order.get("total_amount", items_total + delivery_fee)
     payment_method = order.get("payment_method", "")
     status = order.get("status", "រង់ចាំពិនិត្យ")
@@ -799,7 +850,7 @@ async def send_order_to_admin(context: ContextTypes.DEFAULT_TYPE, order_id: int,
             f"📦 <b>ទំនិញដែលបានកុម្ម៉ង់៖</b>\n{items_text}\n"
             f"━━━━━━━━━━━━━━\n"
             f"📦 តម្លៃទំនិញ: {CURRENCY}{items_total:.2f}\n"
-            f"🚚 សេវាដឹកជញ្ជូន: +{CURRENCY}{delivery_fee:.2f} (ឬ {delivery_fee*4000:,.0f} ៛)\n"
+            f"🚚 សេវាដឹកជញ្ជូន: {format_delivery_fee_text(delivery_fee)}\n"
             f"💰 <b>តម្លៃសរុបបានទូទាត់: {CURRENCY}{total:.2f} (ឬ {total*4000:,.0f} ៛)</b>\n\n"
             f"👉 <i>សូម Admin ផ្ទៀងផ្ទាត់ម៉ោង និងចំនួនទឹកប្រាក់លើរូបភាព Slip របស់អតិថិជនខាងលើនេះ ដើម្បីធានាភាពត្រឹមត្រូវ ១០០%!</i>"
         )
@@ -821,7 +872,7 @@ async def send_order_to_admin(context: ContextTypes.DEFAULT_TYPE, order_id: int,
             f"📦 <b>ទំនិញដែលបានកុម្ម៉ង់៖</b>\n{items_text}\n"
             f"━━━━━━━━━━━━━━\n"
             f"📦 តម្លៃទំនិញ: {CURRENCY}{items_total:.2f}\n"
-            f"🚚 សេវាដឹកជញ្ជូន: +{CURRENCY}{delivery_fee:.2f} (ឬ {delivery_fee*4000:,.0f} ៛)\n"
+            f"🚚 សេវាដឹកជញ្ជូន: {format_delivery_fee_text(delivery_fee)}\n"
             f"💰 <b>តម្លៃសរុបត្រូវទទួល: {CURRENCY}{total:.2f} (ឬ {total*4000:,.0f} ៛)</b>\n"
         )
         admin_buttons.append([
@@ -841,7 +892,7 @@ async def send_order_to_admin(context: ContextTypes.DEFAULT_TYPE, order_id: int,
             f"📦 <b>ទំនិញដែលបានកុម្ម៉ង់៖</b>\n{items_text}\n"
             f"━━━━━━━━━━━━━━\n"
             f"📦 តម្លៃទំនិញ: {CURRENCY}{items_total:.2f}\n"
-            f"🚚 សេវាដឹកជញ្ជូន: +{CURRENCY}{delivery_fee:.2f} (ឬ {delivery_fee*4000:,.0f} ៛)\n"
+            f"🚚 សេវាដឹកជញ្ជូន: {format_delivery_fee_text(delivery_fee)}\n"
             f"💰 <b>តម្លៃសរុបត្រូវទទួល: {CURRENCY}{total:.2f} (ឬ {total*4000:,.0f} ៛)</b>\n"
         )
         admin_buttons.append([
@@ -894,6 +945,9 @@ async def checkout_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     checkout_data = context.user_data["checkout"]
     initial_status = "រង់ចាំការទូទាត់ KHQR" if is_khqr else "រង់ចាំពិនិត្យ"
 
+    cart_items = database.get_cart(user_id)
+    effective_del_fee = get_cart_delivery_fee(cart_items)
+
     # Save order to DB
     order = database.create_order(
         user_id=user_id,
@@ -901,7 +955,7 @@ async def checkout_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         phone=checkout_data.get("phone", ""),
         address=checkout_data.get("address", ""),
         payment_method=payment_method,
-        delivery_fee=DELIVERY_FEE,
+        delivery_fee=effective_del_fee,
         status=initial_status
     )
 
@@ -911,7 +965,7 @@ async def checkout_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     order_id = order["order_id"]
     items_total = order.get("items_total", sum(item["subtotal"] for item in order["items"]))
-    delivery_fee = order.get("delivery_fee", DELIVERY_FEE)
+    delivery_fee = order.get("delivery_fee", effective_del_fee)
     total = order["total_amount"]
     items = order["items"]
 
@@ -937,7 +991,8 @@ async def checkout_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         qr_caption = (
             f"📱 <b>ABA' KHQR សម្រាប់ទូទាត់ការបញ្ជាទិញ #{order_id}</b>\n"
             f"━━━━━━━━━━━━━━\n"
-            f"💰 ចំនួនទឹកប្រាក់ត្រូវបង់ (រួមបញ្ចូលសេវា): <b>{CURRENCY}{total:.2f} (ឬ {total*4000:,.0f} ៛)</b>\n"
+            f"🚚 សេវាដឹកជញ្ជូន: <b>{format_delivery_fee_text(delivery_fee)}</b>\n"
+            f"💰 ចំនួនទឹកប្រាក់ត្រូវបង់សរុប: <b>{CURRENCY}{total:.2f} (ឬ {total*4000:,.0f} ៛)</b>\n"
             f"━━━━━━━━━━━━━━\n"
             f"👤 ឈ្មោះគណនី: <b>SMAEL SOS</b>\n"
             f"🏦 ធនាគារ: <b>ABA BANK</b>\n"
@@ -968,7 +1023,7 @@ async def checkout_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📋 <b>មុខទំនិញ៖</b>\n{items_text}\n"
         f"━━━━━━━━━━━━━━\n"
         f"📦 តម្លៃទំនិញ: <b>{CURRENCY}{items_total:.2f}</b>\n"
-        f"🚚 សេវាដឹកជញ្ជូន: <b>+{CURRENCY}{delivery_fee:.2f} (ឬ {delivery_fee*4000:,.0f} ៛)</b>\n"
+        f"🚚 សេវាដឹកជញ្ជូន: <b>{format_delivery_fee_text(delivery_fee)}</b>\n"
         f"💰 <b>សរុបត្រូវបង់: {CURRENCY}{total:.2f} (ឬ {total*4000:,.0f} ៛)</b>\n"
         f"💳 វិធីទូទាត់: {payment_method}\n"
         f"📞 លេខទូរស័ព្ទ: <code>{checkout_data['phone']}</code>\n"
@@ -1049,7 +1104,7 @@ def generate_invoice_text(order_id: int, slip_confirmed: bool = False) -> str:
         item_lines.append(f" {idx}. <b>{item['product_name']}</b>\n     ▫️ ចំនួន: x{item['quantity']} | តម្លៃ: {CURRENCY}{item['price']:.2f} | សរុប: <b>{CURRENCY}{subtotal:.2f}</b>")
 
     items_block = "\n".join(item_lines) if item_lines else "• គ្មានមុខទំនិញ"
-    delivery_fee = order.get("delivery_fee", DELIVERY_FEE)
+    delivery_fee = order.get("delivery_fee", 0.0 if items_total >= 20.0 else DELIVERY_FEE)
     total = order.get("total_amount", items_total + delivery_fee)
     khr_total = total * 4000
     payment_method = order.get("payment_method", "📱 ស្កេន KHQR / Bakong")
@@ -1074,7 +1129,7 @@ def generate_invoice_text(order_id: int, slip_confirmed: bool = False) -> str:
         f"{items_block}\n"
         f"━━━━━━━━━━━━━━━━━━━\n"
         f"📦 តម្លៃទំនិញសរុប: <b>{CURRENCY}{items_total:.2f}</b>\n"
-        f"🚚 សេវាដឹកជញ្ជូន: <b>+{CURRENCY}{delivery_fee:.2f} (ឬ {delivery_fee*4000:,.0f} ៛)</b>\n"
+        f"🚚 សេវាដឹកជញ្ជូន: <b>{format_delivery_fee_text(delivery_fee)}</b>\n"
         f"💰 <b>ទឹកប្រាក់សរុប: {CURRENCY}{total:.2f} (ឬ {khr_total:,.0f} ៛)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━\n"
         f"✅ <b>បញ្ជាក់៖ ការទូទាត់ប្រាក់ពិតជាទទួលបានជោគជ័យ ១០០%</b>\n"
