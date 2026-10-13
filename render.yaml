@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: telegram-auto-reply
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: STRING_SESSION
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
